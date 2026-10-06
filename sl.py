@@ -1,4 +1,4 @@
-#!/opt/homebrew/bin/python3.11
+#!/usr/bin/env python3
 """
 sl — SyncLight CLI
 
@@ -13,19 +13,32 @@ Usage:
   sl color blue          Blue        (  0, 100, 255)
   sl color purple        Purple      (150,   0, 255)
   sl color R G B         Custom RGB  e.g.  sl color 255 128 0
+  sl ambi                Start ambilight (Ctrl+C to stop)
+  sl effect <0-11>       Hardware dynamic effect
+  sl sound <0-6>         Sound-reactive effect (strip mic)
+  sl brightness <5-255>  Brightness
+  sl speed <5-100>       Effect speed
 """
 
 import os
 import sys
 
 try:
-    import hid
+    import hid  # noqa: F401
 except ImportError:
     print("Missing dependency: pip3 install hid")
     sys.exit(1)
 
-VENDOR_ID  = 0x1A86
-PRODUCT_ID = 0xFE07
+from device import (
+    DYNAMIC_EFFECTS,
+    SOUND_EFFECTS,
+    apply_dynamic_effect,
+    apply_sound_effect,
+    oneshot,
+    set_brightness,
+    set_dynamic_speed,
+    set_section_led,
+)
 
 STATE_FILE = os.path.expanduser("~/.synclight")
 
@@ -39,80 +52,44 @@ PRESETS = {
     "purple": (150,   0, 255),
 }
 
+# Back-compat exports used by gui.py
+PLIST = os.path.expanduser("~/Library/LaunchAgents/com.robobloq.synclight.plist")
 
-# ── protocol ──────────────────────────────────────────────────────────────────
 
-def _cksum(buf):
-    return sum(buf) % 256
+def _driver_loaded():
+    from device import driver_loaded
+    return driver_loaded()
+
 
 def _set_color(r, g, b):
-    led = bytearray([0, r, g, b, 255])
-    n = 6 + len(led)
-    buf = bytearray(n)
-    buf[0:2] = b"RB"
-    buf[2] = n
-    buf[3] = 1
-    buf[4] = 0x86          # setSectionLED
-    buf[5:5 + len(led)] = led
-    buf[n - 1] = _cksum(buf[:n - 1])
-    return bytes(buf)
-
-
-# ── device ────────────────────────────────────────────────────────────────────
-
-import os
-import signal
-import subprocess
-import time
-
-
-DRIVER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "synclight.py")
-PYTHON = sys.executable
-
-
-def _driver_running():
-    try:
-        subprocess.check_output(["pgrep", "-f", "python.*synclight.py"], text=True)
-        return True
-    except subprocess.CalledProcessError:
-        return False
+    return set_section_led(r, g, b)
 
 
 def _send(data):
-    # Kill driver to release exclusive HID access, restart it after
-    was_running = _driver_running()
-    if was_running:
-        subprocess.run(["pkill", "-f", "python.*synclight.py"], capture_output=True)
-        time.sleep(0.5)
+    oneshot(data)
 
-    try:
-        devices = hid.enumerate(VENDOR_ID, PRODUCT_ID)
-        if not devices:
-            print("SyncLight not found. Is it plugged in?")
-            sys.exit(1)
-        dev = hid.Device(path=devices[0]["path"])
-        dev.write(bytes([0x00]) + data)
-        dev.close()
-    finally:
-        if was_running:
-            subprocess.Popen([PYTHON, DRIVER_SCRIPT],
-                             stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
-
-
-# ── commands ──────────────────────────────────────────────────────────────────
 
 def cmd_on():
     try:
         r, g, b = (int(x) for x in open(STATE_FILE).read().strip().split())
     except Exception:
         r, g, b = 255, 200, 100
-    _send(_set_color(r, g, b))
+    try:
+        _send(_set_color(r, g, b))
+    except RuntimeError as exc:
+        print(exc)
+        sys.exit(1)
     print(f"Light on  rgb({r}, {g}, {b})")
 
+
 def cmd_off():
-    _send(_set_color(0, 0, 0))
+    try:
+        _send(_set_color(0, 0, 0))
+    except RuntimeError as exc:
+        print(exc)
+        sys.exit(1)
     print("Light off")
+
 
 def cmd_color(args):
     if not args:
@@ -135,11 +112,67 @@ def cmd_color(args):
         sys.exit(1)
 
     open(STATE_FILE, "w").write(f"{r} {g} {b}\n")
-    _send(_set_color(r, g, b))
+    try:
+        _send(_set_color(r, g, b))
+    except RuntimeError as exc:
+        print(exc)
+        sys.exit(1)
     print(f"Color → rgb({r}, {g}, {b})")
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
+def cmd_ambi():
+    from ambilight import AmbilightEngine
+    print("Ambilight running — Ctrl+C to stop")
+    print("If the strip stays dark, grant Screen Recording to Terminal/Python")
+    print("in System Settings → Privacy & Security → Screen Recording")
+    eng = AmbilightEngine()
+    eng.start()
+    try:
+        while True:
+            import time
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nStopping…")
+        eng.stop()
+
+
+def cmd_effect(args):
+    if not args:
+        for i, name in DYNAMIC_EFFECTS:
+            print(f"  {i}: {name}")
+        sys.exit(0)
+    idx = int(args[0])
+    apply_dynamic_effect(idx)
+    print(f"Effect → {DYNAMIC_EFFECTS[idx][1] if idx < len(DYNAMIC_EFFECTS) else idx}")
+
+
+def cmd_sound(args):
+    if not args:
+        for i, name in SOUND_EFFECTS:
+            print(f"  {i}: {name}")
+        sys.exit(0)
+    idx = int(args[0])
+    apply_sound_effect(idx)
+    print(f"Sound → {SOUND_EFFECTS[idx][1] if idx < len(SOUND_EFFECTS) else idx}")
+
+
+def cmd_brightness(args):
+    if not args:
+        print("Usage: sl brightness <5-255>")
+        sys.exit(1)
+    val = int(args[0])
+    oneshot(set_brightness(val), settle_ms=150)
+    print(f"Brightness → {val}")
+
+
+def cmd_speed(args):
+    if not args:
+        print("Usage: sl speed <5-100>")
+        sys.exit(1)
+    val = int(args[0])
+    oneshot(set_dynamic_speed(val), settle_ms=150)
+    print(f"Speed → {val}")
+
 
 def main():
     args = sys.argv[1:]
@@ -154,6 +187,16 @@ def main():
         cmd_off()
     elif cmd == "color":
         cmd_color(args[1:])
+    elif cmd in ("ambi", "ambilight", "sync"):
+        cmd_ambi()
+    elif cmd == "effect":
+        cmd_effect(args[1:])
+    elif cmd == "sound":
+        cmd_sound(args[1:])
+    elif cmd in ("brightness", "bri"):
+        cmd_brightness(args[1:])
+    elif cmd == "speed":
+        cmd_speed(args[1:])
     else:
         print(f"Unknown command: {cmd}")
         print(__doc__)

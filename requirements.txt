@@ -1,0 +1,7 @@
+hid>=1.0.9
+mss>=10.0.0
+pyobjc-core==10.3.2
+pyobjc-framework-Cocoa==10.3.2
+pyobjc-framework-WebKit==10.3.2
+Pillow>=10.0.0
+rumps>=0.4.0

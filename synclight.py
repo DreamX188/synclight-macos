@@ -1,4 +1,4 @@
-#!/opt/homebrew/bin/python3.11
+#!/usr/bin/env python3
 """
 SyncLight macOS Driver
 Turns off the Robobloq SyncLight strip when the display sleeps,

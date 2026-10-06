@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.DS_Store
+*.log
+
+# Build artifacts
+glass/.build/
+glass/build/
+.synclight_icon.iconset/
+.synclight_iconset/
+
+# Local state (user machine)
+.synclight
+.synclight_settings.json
+*.command

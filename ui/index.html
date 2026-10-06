@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SyncLight</title>
+  <link rel="stylesheet" href="glass.css" />
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true">
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <div class="orb orb-c"></div>
+    <div class="sheen"></div>
+  </div>
+
+  <main class="shell">
+    <header class="brand glass-panel">
+      <div class="mark" aria-hidden="true"><span></span></div>
+      <div class="titles">
+        <h1>SyncLight</h1>
+        <p class="sub" id="modeLine">Static · Ready</p>
+      </div>
+      <button class="icon-btn" id="btnQuitHint" title="Menu bar icon stays active" type="button">SL</button>
+    </header>
+
+    <section class="hero glass-panel">
+      <div class="preview" id="preview" aria-hidden="true">
+        <div class="strip"></div>
+      </div>
+      <div class="hero-actions">
+        <button class="pill accent" data-cmd="ambi" id="btnAmbi">Ambilight</button>
+        <button class="pill" data-cmd="on">On</button>
+        <button class="pill ghost" data-cmd="off">Off</button>
+      </div>
+    </section>
+
+    <section class="glass-panel controls">
+      <label class="slider">
+        <span><i>☀</i> Brightness <b id="briVal">78%</b></span>
+        <input id="brightness" type="range" min="5" max="255" value="200" />
+      </label>
+      <label class="slider">
+        <span><i>⏱</i> Speed <b id="spdVal">Normal</b></span>
+        <input id="speed" type="range" min="5" max="100" value="55" />
+      </label>
+      <label class="slider" id="sensRow" hidden>
+        <span><i>🎙</i> Mic sensitivity <b id="sensVal">70</b></span>
+        <input id="sensitivity" type="range" min="5" max="100" value="70" />
+      </label>
+    </section>
+
+    <nav class="tabs glass-panel" role="tablist">
+      <button class="tab active" data-tab="effects">Effects</button>
+      <button class="tab" data-tab="music">Music</button>
+      <button class="tab" data-tab="colors">Colors</button>
+    </nav>
+
+    <section id="panel-effects" class="grid glass-panel tab-panel active"></section>
+    <section id="panel-music" class="grid glass-panel tab-panel" hidden></section>
+    <section id="panel-colors" class="grid glass-panel tab-panel" hidden></section>
+
+    <section class="glass-panel autostart">
+      <label class="switch">
+        <input id="autostart" type="checkbox" />
+        <span class="track"></span>
+        <span class="label">Open at Login</span>
+      </label>
+      <p class="hint">Menu bar icon stays after you close the window.</p>
+    </section>
+  </main>
+
+  <script src="glass.js"></script>
+</body>
+</html>

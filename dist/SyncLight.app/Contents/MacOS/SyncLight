@@ -1,0 +1,3 @@
+#!/bin/bash
+cd "/Users/admin/Projects/synclight" || exit 1
+exec "/usr/bin/python3" "/Users/admin/Projects/synclight/glass_gui.py"
