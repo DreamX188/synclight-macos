@@ -9,7 +9,15 @@
   <key>CFBundleExecutable</key><string>SyncLight</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleShortVersionString</key><string>1.5.0</string>
+  <key>CFBundleVersion</key><string>20261118a</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>SyncLight ищет и управляет Bluetooth LED-лентами (потолок и пол).</string>
+  <key>NSBluetoothPeripheralUsageDescription</key>
+  <string>SyncLight ищет и управляет Bluetooth LED-лентами (потолок и пол).</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>SyncLight снимает край экрана для Ambilight и зеркала света в комнату.</string>
 </dict>
 </plist>

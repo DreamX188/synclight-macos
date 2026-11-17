@@ -18,6 +18,12 @@ Usage:
   sl sound <0-6>         Sound-reactive effect (strip mic)
   sl brightness <5-255>  Brightness
   sl speed <5-100>       Effect speed
+  sl bt scan             Scan Bluetooth LED strips
+  sl bt status           Show ceiling/floor bindings
+  sl bt ceiling <addr>   Bind ceiling strip MAC/UUID
+  sl bt floor <addr>     Bind floor strip MAC/UUID
+  sl bt on|off|color …   Control bound BT strips
+  sl bt connect          Connect bound ceiling/floor strips
 """
 
 import os
@@ -174,6 +180,83 @@ def cmd_speed(args):
     print(f"Speed → {val}")
 
 
+def cmd_bt(args):
+    from bt_strips import get_bt_manager
+    from settings import load_settings, save_settings
+    from targets import apply_color, apply_power
+
+    mgr = get_bt_manager()
+    cfg = load_settings()
+    mgr.load_bindings(cfg)
+
+    if not args:
+        print("Usage: sl bt scan|status|ceiling|floor|on|off|color")
+        sys.exit(1)
+
+    sub = args[0].lower()
+    if sub == "scan":
+        print("Scanning Bluetooth LE (8s)…")
+        found = mgr.scan(8.0)
+        if mgr.last_error:
+            print("Error:", mgr.last_error)
+            print("Grant Bluetooth to Terminal/Python/SyncLight in System Settings.")
+        if not found:
+            print("No LED strips found.")
+            sys.exit(0)
+        for d in found:
+            print(f"  {d.rssi:4}  {d.address}  {d.name}  [{d.protocol}]")
+        return
+
+    if sub == "status":
+        st = mgr.status()
+        for role in ("ceiling", "floor"):
+            r = st[role]
+            print(f"{role:8} bound={r['bound']} connected={r['connected']} {r['name']} {r['address']}")
+        if st["last_error"]:
+            print("last_error:", st["last_error"])
+        return
+
+    if sub in ("ceiling", "floor"):
+        if len(args) < 2:
+            print(f"Usage: sl bt {sub} <address> [name]")
+            sys.exit(1)
+        addr = args[1]
+        name = " ".join(args[2:]) if len(args) > 2 else ""
+        mgr.assign(sub, addr, name=name)
+        cfg.update(mgr.dump_bindings())
+        save_settings(cfg)
+        print(f"Bound {sub} → {addr} {name}")
+        return
+
+    if sub == "connect":
+        try:
+            print(mgr.connect_bound())
+        except Exception as exc:
+            print(exc)
+            sys.exit(1)
+        return
+    if sub == "on":
+        print(apply_power("bt", True))
+        return
+    if sub == "off":
+        print(apply_power("bt", False))
+        return
+    if sub == "color":
+        rest = args[1:]
+        if rest and rest[0] in PRESETS:
+            rgb = PRESETS[rest[0]]
+        elif len(rest) == 3:
+            rgb = tuple(int(x) for x in rest)
+        else:
+            print("Usage: sl bt color <name|R G B>")
+            sys.exit(1)
+        print(apply_color("bt", *rgb))
+        return
+
+    print(f"Unknown bt command: {sub}")
+    sys.exit(1)
+
+
 def main():
     args = sys.argv[1:]
     if not args:
@@ -197,6 +280,8 @@ def main():
         cmd_brightness(args[1:])
     elif cmd == "speed":
         cmd_speed(args[1:])
+    elif cmd == "bt":
+        cmd_bt(args[1:])
     else:
         print(f"Unknown command: {cmd}")
         print(__doc__)

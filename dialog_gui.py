@@ -8,6 +8,7 @@ Effects, brightness, speed, ambilight, autostart.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import traceback
 
@@ -31,7 +32,9 @@ from device import (
     set_section_led,
 )
 from settings import load_settings, save_settings
+from singleton import ensure_singleton
 from sl import PRESETS, STATE_FILE
+from version import display_version, window_title
 
 GUI_PLIST = os.path.expanduser(
     "~/Library/LaunchAgents/com.robobloq.synclight.gui.plist"
@@ -192,12 +195,22 @@ end tell
     # 3) Fallback: no Desktop write rights — app still works from ~/Applications
     return APP_PATH
 
+def _is_macho(path: str) -> bool:
+    try:
+        out = subprocess.check_output(["file", "-b", path], text=True)
+        return "Mach-O" in out
+    except Exception:
+        return False
+
+
 def _install_app_bundle() -> None:
+    from version import BUILD, VERSION
+
     os.makedirs(f"{APP_PATH}/Contents/MacOS", exist_ok=True)
     os.makedirs(f"{APP_PATH}/Contents/Resources", exist_ok=True)
     with open(f"{APP_PATH}/Contents/Info.plist", "w") as f:
         f.write(
-            """<?xml version="1.0" encoding="UTF-8"?>
+            f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -208,25 +221,68 @@ def _install_app_bundle() -> None:
   <key>CFBundleExecutable</key><string>SyncLight</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleShortVersionString</key><string>{VERSION}</string>
+  <key>CFBundleVersion</key><string>{BUILD}</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>SyncLight ищет и управляет Bluetooth LED-лентами (потолок и пол).</string>
+  <key>NSBluetoothPeripheralUsageDescription</key>
+  <string>SyncLight ищет и управляет Bluetooth LED-лентами (потолок и пол).</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>SyncLight снимает край экрана для Ambilight и зеркала света в комнату.</string>
 </dict>
 </plist>
 """
         )
-    with open(f"{APP_PATH}/Contents/MacOS/SyncLight", "w") as f:
-        f.write(
-            "#!/bin/bash\n"
-            f'cd "{ROOT}" || exit 1\n'
-            f'exec "{PYTHON}" "{GLASS_SCRIPT}"\n'
+    # Dock BLE TCC: CFBundleExecutable must be a real Mach-O. Shell-script
+    # launchers never get a usable Bluetooth grant; signed binary keeps
+    # SyncLight.app as the responsible identity after exec → glass_gui.
+    macos = f"{APP_PATH}/Contents/MacOS"
+    os.makedirs(macos, exist_ok=True)
+    for stale in ("SyncLight.bin",):
+        try:
+            os.remove(f"{macos}/{stale}")
+        except OSError:
+            pass
+
+    launcher = f"{macos}/SyncLight"
+    src = os.path.join(ROOT, "native_launch.c")
+    glass = os.path.join(ROOT, "glass_gui.py")
+    py = "/usr/bin/python3"
+    compile_cmd = [
+        "clang",
+        "-O2",
+        "-o",
+        launcher,
+        src,
+        f"-DGLASS_PY=\"{glass}\"",
+        f"-DPYTHON_BIN=\"{py}\"",
+        "-framework",
+        "CoreGraphics",
+    ]
+    r = subprocess.run(compile_cmd, capture_output=True, text=True)
+    if r.returncode != 0 or not os.path.isfile(launcher) or not _is_macho(launcher):
+        # Last-resort shebang (BLE/Screen TCC attach to Python — weaker)
+        sys.stderr.write(
+            f"SyncLight Mach-O build failed, using shell fallback:\n{r.stderr or r.stdout}\n"
         )
-    os.chmod(f"{APP_PATH}/Contents/MacOS/SyncLight", 0o755)
+        with open(launcher, "w") as f:
+            f.write(f"#!/bin/bash\nexec {py} \"{glass}\"\n")
+        os.chmod(launcher, 0o755)
+    else:
+        os.chmod(launcher, 0o755)
+        subprocess.run(
+            ["codesign", "-s", "-", "--force", "--deep", APP_PATH],
+            capture_output=True,
+        )
     _make_icon(f"{APP_PATH}/Contents/Resources/AppIcon.icns")
 
 
 def _make_icon(icns_path: str) -> None:
+    """Ambilight-style mark: dark tile, soft spectrum halo, glowing screen core."""
     try:
-        from PIL import Image, ImageDraw
+        from PIL import Image, ImageDraw, ImageFilter
     except ImportError:
         return
 
@@ -234,33 +290,133 @@ def _make_icon(icns_path: str) -> None:
     subprocess.run(["rm", "-rf", iconset], capture_output=True)
     os.makedirs(iconset, exist_ok=True)
 
+    def _lerp(a, b, t):
+        return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(len(a)))
+
     def draw(size: int) -> Image.Image:
-        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        # Render at 2× then downscale for smoother arcs
+        s = max(64, size * 2)
+        img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
-        m = max(1, size // 10)
+        m = max(2, s // 14)
+        radius = max(8, s // 4)
+
+        # Soft outer ambient wash (ambilight bleed)
+        glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(glow)
+        for i in range(8, 0, -1):
+            t = i / 8.0
+            col = _lerp((255, 92, 40, 0), (255, 140, 60, 55), t)
+            inset = m - int(s * 0.04 * (1 - t))
+            gd.rounded_rectangle(
+                [inset, inset, s - inset, s - inset],
+                radius=radius + int(s * 0.03),
+                outline=col,
+                width=max(2, s // 28),
+            )
+        glow = glow.filter(ImageFilter.GaussianBlur(radius=max(2, s // 28)))
+        img = Image.alpha_composite(img, glow)
+        d = ImageDraw.Draw(img)
+
+        # Charcoal rounded tile
         d.rounded_rectangle(
-            [m, m, size - m, size - m],
-            radius=max(2, size // 5),
-            fill=(26, 29, 33, 255),
+            [m, m, s - m, s - m],
+            radius=radius,
+            fill=(18, 20, 24, 255),
         )
-        pad = max(2, size // 5)
-        d.arc(
-            [pad, pad, size - pad, size - pad],
+        # Subtle top sheen
+        sheen = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(sheen)
+        sd.rounded_rectangle(
+            [m + 1, m + 1, s - m - 1, m + s // 3],
+            radius=radius,
+            fill=(255, 255, 255, 22),
+        )
+        sheen = sheen.filter(ImageFilter.GaussianBlur(radius=max(1, s // 40)))
+        img = Image.alpha_composite(img, sheen)
+        d = ImageDraw.Draw(img)
+
+        # Spectrum halo — warm top, cool bottom (room ceiling/floor)
+        pad = max(4, s // 5)
+        stroke = max(3, s // 14)
+        ring = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        rd = ImageDraw.Draw(ring)
+        # Upper warm arc
+        rd.arc(
+            [pad, pad, s - pad, s - pad],
             start=200,
             end=340,
-            fill=(255, 140, 40, 255),
-            width=max(2, size // 12),
+            fill=(255, 120, 45, 255),
+            width=stroke,
         )
-        d.arc(
-            [pad, pad, size - pad, size - pad],
+        # Lower cool arc
+        rd.arc(
+            [pad, pad, s - pad, s - pad],
             start=20,
             end=160,
-            fill=(47, 111, 237, 255),
-            width=max(2, size // 12),
+            fill=(64, 140, 255, 255),
+            width=stroke,
         )
-        c = size // 2
-        r = max(2, size // 10)
-        d.ellipse([c - r, c - r, c + r, c + r], fill=(255, 200, 100, 255))
+        # Side violet bridges
+        rd.arc(
+            [pad, pad, s - pad, s - pad],
+            start=340,
+            end=20,
+            fill=(180, 80, 255, 220),
+            width=max(2, stroke - 1),
+        )
+        rd.arc(
+            [pad, pad, s - pad, s - pad],
+            start=160,
+            end=200,
+            fill=(40, 220, 180, 220),
+            width=max(2, stroke - 1),
+        )
+        ring = ring.filter(ImageFilter.GaussianBlur(radius=max(1, s // 90)))
+        img = Image.alpha_composite(img, ring)
+        d = ImageDraw.Draw(img)
+
+        # Crisp ring on top of blur
+        d.arc(
+            [pad, pad, s - pad, s - pad],
+            start=205,
+            end=335,
+            fill=(255, 170, 70, 255),
+            width=max(2, stroke // 2),
+        )
+        d.arc(
+            [pad, pad, s - pad, s - pad],
+            start=25,
+            end=155,
+            fill=(90, 170, 255, 255),
+            width=max(2, stroke // 2),
+        )
+
+        # Glowing screen core
+        cx = cy = s // 2
+        core_r = max(4, s // 7)
+        core = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        cd = ImageDraw.Draw(core)
+        cd.ellipse(
+            [cx - core_r * 2, cy - core_r * 2, cx + core_r * 2, cy + core_r * 2],
+            fill=(255, 160, 60, 40),
+        )
+        core = core.filter(ImageFilter.GaussianBlur(radius=max(2, s // 20)))
+        img = Image.alpha_composite(img, core)
+        d = ImageDraw.Draw(img)
+        d.ellipse(
+            [cx - core_r, cy - core_r, cx + core_r, cy + core_r],
+            fill=(255, 220, 150, 255),
+        )
+        # Tiny highlight
+        hr = max(1, core_r // 3)
+        d.ellipse(
+            [cx - hr, cy - core_r // 2 - hr // 2, cx + hr // 2, cy - core_r // 4],
+            fill=(255, 255, 255, 180),
+        )
+
+        if size != s:
+            img = img.resize((size, size), Image.Resampling.LANCZOS)
         return img
 
     pairs = [
@@ -275,8 +431,8 @@ def _make_icon(icns_path: str) -> None:
         (512, "icon_512x512.png"),
         (1024, "icon_512x512@2x.png"),
     ]
-    for s, name in pairs:
-        draw(s).save(os.path.join(iconset, name))
+    for sz, name in pairs:
+        draw(sz).save(os.path.join(iconset, name))
 
     subprocess.run(
         ["iconutil", "-c", "icns", iconset, "-o", icns_path],
@@ -296,23 +452,9 @@ def save_color(r, g, b):
     open(STATE_FILE, "w").write(f"{r} {g} {b}\n")
 
 
-def _stop_other_instances() -> None:
-    mypid = os.getpid()
-    try:
-        out = subprocess.check_output(["pgrep", "-f", "dialog_gui.py"], text=True)
-    except subprocess.CalledProcessError:
-        return
-    for line in out.split():
-        try:
-            pid = int(line.strip())
-        except ValueError:
-            continue
-        if pid != mypid:
-            subprocess.run(["kill", str(pid)], capture_output=True)
-
-
 def main():
-    _stop_other_instances()
+    ensure_singleton("dialog")
+    notify(f"{window_title()} · одна копия")
 
     cfg = load_settings()
     color = tuple(cfg.get("color") or load_color())

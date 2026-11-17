@@ -35,12 +35,13 @@ Official apps target Windows. This project brings full Mac support: display slee
 | | RU | EN |
 |---|---|---|
 | **GUI** | Полупрозрачное Liquid Glass окно + иконка в меню | Translucent Liquid Glass window + menu-bar icon |
-| **Амбилайт** | Синхронизация с краями экрана (~20 fps) | Screen-edge sync (~20 fps) via SC `setSyncScreen` |
+| **Амбилайт** | Safari/Yandex/видео → USB + потолок/пол (~55–75 fps) | Browser/video → USB + ceiling/floor (~55–75 fps) |
 | **Эффекты** | 7 прошивочных эффектов (радуга, дыхание, …) | 7 firmware effects (Rainbow, Breathing, Chase, …) |
 | **Музыка** | Реакция на микрофон ленты + чувствительность | Device-mic rhythm effects + sensitivity |
 | **Яркость / скорость** | Как в оригинальном SyncLight | Matches official SyncLight scaling |
 | **Сон Mac** | Выключает ленту при засыпании дисплея | Turns strip off on display sleep, restores on wake |
-| **CLI** | `sl on \| off \| color \| effect \| ambi …` | Same CLI |
+| **BT потолок / пол** | Две Bluetooth-ленты (LEDnetWF и др. с Ozon/WB) | Ceiling + floor BLE strips |
+| **CLI** | `sl on \| off \| color \| effect \| ambi …` / `sl bt …` | Same CLI |
 | **Автозапуск** | Галочка «открывать при входе» | Optional Login Item |
 
 ---
@@ -89,14 +90,37 @@ python3 glass_gui.py
 sl-gui
 ```
 
-- **Ambilight / On / Off**
+- **Зоны:** Все / Монитор (USB) / Потолок / Пол
+- **Ambilight / On / Off** (амбилайт — только USB-монитор)
 - **Effects** — анимации прошивки (индексы 0–6)
 - **Music** — режимы под микрофон + чувствительность
 - **Colors** — тёплый / холодный / белый / RGB
+- **Bluetooth** — сканер и назначение потолок/пол
 - **Brightness** & **Speed**
 - **Open at Login**
 
 Закрытие окна не завершает приложение — остаётся иконка в меню.
+
+### Bluetooth-ленты (потолок / пол)
+
+Типичные контроллеры с Ozon / Wildberries: **LEDnetWF** (Magic Hue / Zengge), ELK-BLEDOM, HappyLighting.
+
+```bash
+sl bt scan
+sl bt ceiling <address>
+sl bt floor <address>
+sl bt on
+sl bt color warm
+sl bt off
+```
+
+В GUI:
+1. Вкладка **Bluetooth** → **Сканировать** → назначить **Потолок** / **Пол**
+2. Нажать **Подключить BT**
+3. Зоны сверху: Все / Монитор / Потолок / Пол / Комната
+4. **Ambilight** управляет USB-лентой монитора; включи **Зеркало в комнату**, чтобы потолок и пол повторяли средний цвет экрана
+
+Нужно разрешение **Bluetooth** для SyncLight / Python в Системных настройках.
 
 ---
 

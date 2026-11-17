@@ -12,8 +12,15 @@ glass/.build/
 glass/build/
 .synclight_icon.iconset/
 .synclight_iconset/
+.synclight_AppIcon.icns
+dist/*.zip
+dist/icon_preview_*.png
 
 # Local state (user machine)
 .synclight
 .synclight_settings.json
 *.command
+:memory:.ses
+snapshot.json
+instance.lock
+instance.json
